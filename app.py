@@ -151,9 +151,75 @@ if not df_leads.empty:
         badge_style = "badge-solar" if "Solar" in projekt else "badge-3nine"
         proj_label = "☀️ SOLAR" if "Solar" in projekt else "🌀 3NINE"
         
-        st.markdown(f"""
+        # HTML Karte sauber formatiert ohne fehlerhafte Zeilenumbrüche
+        html_card = f"""
             <div class="lead-card">
                 <span class="{badge_style}">{proj_label}</span>
                 <div class="lead-header">{lead_row['firmenname']}</div>
                 <div class="lead-sub">📍 {lead_row['adresse']} &nbsp;|&nbsp; 📞 Telefon: {lead_row['telefon']}</div>
-                <div class="lead-meta" style="color: #a1b5ab;">👤 <b>Bearbeiter:</b> {lead_row['bearbeiter']} &nbsp;|&nbsp; ⏳ <b>WV am:</b> {
+                <div class="lead-meta" style="color: #a1b5ab;">👤 <b>Bearbeiter:</b> {lead_row['bearbeiter']} &nbsp;|&nbsp; ⏳ <b>WV am:</b> {lead_row['wiedervorlage']} &nbsp;|&nbsp; 📅 <b>Termin:</b> {lead_row['termin']}</div>
+            </div>
+        """
+        st.markdown(html_card, unsafe_allow_html=True)
+        
+        # Eingabemaske für das Telefonat
+        col_s1, col_s2, col_s3 = st.columns(3)
+        with col_s1:
+            neuer_status = st.selectbox(
+                "Status ändern:", 
+                ["Offen (Unbearbeitet)", "In Bearbeitung", "Termin vereinbart", "Kein Interesse"],
+                index=["Offen (Unbearbeitet)", "In Bearbeitung", "Termin vereinbart", "Kein Interesse"].index(lead_row['status'])
+            )
+        with col_s2:
+            wv_check = st.checkbox("Wiedervorlage setzen", value=(lead_row['wiedervorlage'] != "Keine"))
+            if wv_check:
+                try:
+                    def_date = datetime.strptime(lead_row['wiedervorlage'], "%d.%m.%Y").date()
+                except Exception:
+                    def_date = date.today()
+                wv_datum = st.date_input("Anrufen am:", value=def_date, format="DD.MM.YYYY")
+                wv_text = wv_datum.strftime("%d.%m.%Y")
+            else:
+                wv_text = "Keine"
+        with col_s3:
+            termin_text = st.text_input("Fixer Besprechungstermin:", value=lead_row['termin'], placeholder="z.B. 14.08. um 09:30")
+            
+        notiz_text = st.text_input("Telefon-Notiz hinzufügen:", placeholder="z.B. Entscheider spricht kein Interesse aus / Rückruf nächste Woche...")
+        
+        if st.button("💾 Lead-Status & Notiz speichern", type="primary", use_container_width=True):
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            
+            # 1. Update in der Lead-Tabelle
+            cursor.execute("""
+                UPDATE leads 
+                SET status = ?, bearbeiter = ?, wiedervorlage = ?, termin = ?
+                WHERE id = ?
+            """, (neuer_status, aktueller_nutzer, wv_text, termin_text, lead_id))
+            
+            # 2. Historien-Eintrag schreiben, falls eine Notiz eingegeben wurde
+            if notiz_text.strip() != "":
+                zeitstempel = datetime.now().strftime("%d.%m.%Y %H:%M")
+                cursor.execute("""
+                    INSERT INTO history (lead_id, timestamp, bearbeiter, notiz)
+                    VALUES (?, ?, ?, ?)
+                """, (lead_id, zeitstempel, aktueller_nutzer, notiz_text))
+                
+            conn.commit()
+            conn.close()
+            st.success("Änderungen erfolgreich in der Datenbank gespeichert!")
+            st.rerun()
+            
+        # Kontakthistorie anzeigen (Verlauf des Leads)
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            history_df = pd.read_sql_query("SELECT timestamp, bearbeiter, notiz FROM history WHERE lead_id = ? ORDER BY id DESC", conn, params=(lead_id,))
+            conn.close()
+            if not history_df.empty:
+                st.markdown("##### 📜 Telefon-Verlauf für diesen Betrieb:")
+                for _, h_row in history_df.iterrows():
+                    st.write(f"⏱️ `{h_row['timestamp']}` - **{h_row['bearbeiter']}**: {h_row['notiz']}")
+        except Exception:
+            pass
+else:
+    st.info(f"Der Daten-Pool für '{projekt.split()[0]}' ist noch komplett leer. Gib links eine Region ein und klicke auf Suchen oder Würfeln.")
