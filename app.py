@@ -1,98 +1,46 @@
 import streamlit as st
 import sqlite3
-import requests
-from datetime import datetime
 import pandas as pd
 import os
+import subprocess
 from config import DB_PATH
 
-# --- ECHTE SUCHE (API-Modul direkt integriert) ---
-def search_live_leads(suchbegriff, projekt):
-    geo_url = f"https://nominatim.openstreetmap.org/search?q={suchbegriff},+Germany&format=json&limit=1"
-    headers = {'User-Agent': 'EcoLeadCRM_Pro_Search/1.0'}
+# 1. Automatischer Datenbank-Check beim Start
+if not os.path.exists(DB_PATH):
+    st.info("Datenbank wird initialisiert...")
     try:
-        geo_res = requests.get(geo_url, headers=headers, timeout=10).json()
-        if not geo_res: return 0
-        lat, lon = float(geo_res[0]['lat']), float(geo_res[0]['lon'])
-        
-        tag = '["industrial"="logistics"]' if "Solar" in projekt else '["craft"="metal_construction"]'
-        osm_query = f'nwr{tag}(around:20000,{lat},{lon});'
-        
-        resp = requests.get("https://overpass-api.de/api/interpreter", params={'data': f"[out:json];({osm_query});out tags center;"}, timeout=45)
-        elements = resp.json().get('elements', [])
-        
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        count = 0
-        heute = datetime.now().strftime("%d.%m.%Y")
-        for el in elements:
-            tags = el.get('tags', {})
-            name = tags.get('name')
-            if name:
-                try:
-                    # WICHTIG: Hier müssen die Spalten mit deiner init_db.py übereinstimmen
-                    cursor.execute("INSERT INTO leads (projekt, firmenname, adresse, eingetragen_am) VALUES (?, ?, ?, ?)", 
-                                   (projekt, name, "Gefunden via OSM", heute))
-                    count += 1
-                except: continue
-        conn.commit(); conn.close()
-        return count
-    except: return 0
+        # Führt das Skript aus, das du gerade gezeigt hast
+        subprocess.run(["python", "database/init_db.py"], check=True)
+    except Exception as e:
+        st.error(f"Fehler bei der Initialisierung: {e}")
 
-# --- AUTOMATISCHE POOL-LOGIK ---
-def ensure_lead_supply(projekt, suchbegriff):
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        # Prüfen ob Tabelle existiert
-        offen = pd.read_sql_query("SELECT COUNT(*) FROM leads WHERE projekt=? AND status='Offen (Unbearbeitet)'", conn, params=(projekt,)).iloc[0,0]
-        if offen < 30:
-            added = search_live_leads(suchbegriff, projekt)
-            if added > 0: st.rerun()
-    except:
-        st.error("Datenbank-Struktur nicht gefunden. Bitte `init_db.py` ausführen.")
-    conn.close()
-
-# --- DESIGN & UI ---
+# 2. UI-Layout
 st.set_page_config(page_title="Vertriebs-Zentrale", layout="wide")
-st.markdown("<h1 style='color: #4caf50;'>🌱 Vertriebs-Zentrale</h1>", unsafe_allow_html=True)
+st.title("🌱 Vertriebs-Zentrale")
 
+# 3. Datenbank-Verbindung
+def get_leads(projekt):
+    conn = sqlite3.connect(DB_PATH)
+    # Prüfe ob Tabelle existiert, bevor wir abfragen
+    try:
+        df = pd.read_sql_query("SELECT * FROM leads WHERE projekt = ?", conn, params=(projekt,))
+    except:
+        df = pd.DataFrame()
+    conn.close()
+    return df
+
+# 4. Sidebar für Auswahl
 with st.sidebar:
+    st.header("Einstellungen")
     aktueller_nutzer = st.selectbox("Wer arbeitet?", ["Patrick", "Elke", "Admin"])
     projekt = st.selectbox("Projekt:", ["Solar & Speicher (Industrie-Solar)", "3nine (Schmierstoff- & Ölnebelfilter)"])
-    suchbegriff = st.text_input("Region (Such-Start):", "Garbsen")
 
-if suchbegriff:
-    ensure_lead_supply(projekt, suchbegriff)
+# 5. Hauptinhalt
+st.write(f"Arbeitsbereich für: **{projekt}**")
 
-# --- CRM BEARBEITUNG ---
-if os.path.exists(DB_PATH):
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        df_leads = pd.read_sql_query("SELECT * FROM leads WHERE projekt = ?", conn, params=(projekt,))
-        conn.close()
+df = get_leads(projekt)
 
-        if not df_leads.empty:
-            df_offen = df_leads[df_leads['status'] == 'Offen (Unbearbeitet)']
-            if not df_offen.empty:
-                firmen_liste = df_offen['firmenname'].tolist()
-                wahl_firma = st.selectbox("Aktueller Lead:", firmen_liste)
-                lead_row = df_offen[df_offen['firmenname'] == wahl_firma].iloc[0]
-                
-                st.write(f"### {lead_row['firmenname']}")
-                st.write(f"📍 Adresse: {lead_row['adresse']}")
-                
-                status = st.selectbox("Status:", ["In Bearbeitung", "Termin vereinbart", "Kein Interesse"])
-                notiz = st.text_area("Telefon-Notiz:")
-                
-                if st.button("💾 Speichern"):
-                    conn = sqlite3.connect(DB_PATH)
-                    cursor = conn.cursor()
-                    cursor.execute("UPDATE leads SET status=?, bearbeiter=? WHERE id=?", (status, aktueller_nutzer, int(lead_row['id'])))
-                    conn.commit(); conn.close()
-                    st.rerun()
-            else:
-                st.info("Pool wird gefüllt...")
-        else:
-            st.info("Suche läuft...")
-    except:
-        st.warning("Datenbank wird gerade initialisiert.")
+if df.empty:
+    st.warning("Keine Leads gefunden. Bitte stelle sicher, dass die Datenbank initialisiert wurde.")
+else:
+    st.dataframe(df)
