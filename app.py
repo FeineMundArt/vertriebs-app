@@ -61,7 +61,7 @@ st.markdown("""
         font-weight: bold;
     }
     </style>
-""", unsafe_limits=True, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 # --- APP START ---
 st.markdown("<h1 style='text-align: center; color: #4caf50;'>🌱 Eco-Tech Vertriebs- & Lead-Manager</h1>", unsafe_allow_html=True)
@@ -263,4 +263,4 @@ if current_project_leads:
         csv = export_df.to_csv(index=False).encode('utf-8')
         st.download_button("📥 Datei-Download starten", csv, f"eco_leads_{projekt.replace(' ', '_')}.csv", "text/csv")
 else:
-    st.info(f"Für das Projekt '{projekt}' wurden in dieser Region noch keine Potenziale geladen. Nutze die linke Seitenleiste.")                 
+    st.info(f"Für das Projekt '{projekt}' wurden in dieser Region noch keine Potenziale geladen. Nutze die linke Seitenleiste.")
