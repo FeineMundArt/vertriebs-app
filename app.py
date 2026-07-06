@@ -6,7 +6,7 @@ import random
 
 # --- MODERNES DESIGN SETUP ---
 st.set_page_config(
-    page_title="Eco-Tech Vertriebs-Manager", 
+    page_title="FeineMundArt / Eco Vertriebs- & Lead Manager", 
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -25,9 +25,9 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h1 style='text-align: center; color: #4caf50;'>🌱 Eco-Tech Vertriebs- & Lead-Manager</h1>", unsafe_allow_html=True)
+# Neuer App-Titel
+st.markdown("<h1 style='text-align: center; color: #4caf50;'>🌱 FeineMundArt / Eco Vertriebs- & Lead Manager</h1>", unsafe_allow_html=True)
 
-# Globale Datenbank im Zwischenspeicher
 if "db_leads" not in st.session_state:
     st.session_state.db_leads = {}
 
@@ -39,9 +39,9 @@ projekt = st.selectbox(
 )
 
 if "Solar" in projekt:
-    st.markdown("<div style='background-color: #1b3322; border-left: 5px solid #4caf50; padding: 12px; border-radius: 4px; margin-bottom: 15px;'><strong>☀️ Fokus: Photovoltaik & Speicher</strong></div>", unsafe_allow_html=True)
+    st.markdown("<div style='background-color: #1b3322; border-left: 5px solid #4caf50; padding: 12px; border-radius: 4px; margin-bottom: 15px;'><strong>☀️ Fokus: Photovoltaik & Speicher</strong> (Industrie, Gewerbe & Kommunen/Gemeinden)</div>", unsafe_allow_html=True)
 else:
-    st.markdown("<div style='background-color: #102a3a; border-left: 5px solid #0277bd; padding: 12px; border-radius: 4px; margin-bottom: 15px;'><strong>🌀 Fokus: 3nine Filtration</strong></div>", unsafe_allow_html=True)
+    st.markdown("<div style='background-color: #102a3a; border-left: 5px solid #0277bd; padding: 12px; border-radius: 4px; margin-bottom: 15px;'><strong>🌀 Fokus: 3nine Filtration</strong> (Metallbearbeitung & CNC-Fertigung)</div>", unsafe_allow_html=True)
 
 # --- SEITENLEISTE ---
 with st.sidebar:
@@ -54,7 +54,6 @@ with st.sidebar:
     st.write("💡 *Server-Sicherheitsnetz*")
     demo_btn = st.button("🎲 30 Sofort-Leads generieren", use_container_width=True)
 
-# Hilfsfunktion zum Hinzufügen aller Leads
 def add_leads(elements_list):
     added_counter = 0
     for el in elements_list:
@@ -81,53 +80,97 @@ def add_leads(elements_list):
 
 # LIVE SUCHE
 if search_btn and plz:
-    with st.spinner("Durchsuche die Region..."):
+    with st.spinner("Durchsuche die Region weiträumig nach Betrieben und Behörden..."):
         geo_url = f"https://nominatim.openstreetmap.org/search?postalcode={plz}&country=Germany&format=json"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) FeineMundArtBot/3.0'}
+        
         try:
             geo_res = requests.get(geo_url, headers=headers, timeout=10).json()
             if geo_res:
                 lat, lon = float(geo_res[0]['lat']), float(geo_res[0]['lon'])
                 radius_meters = radius * 1000
+                
                 if "Solar" in projekt:
-                    osm_query = f'nwr["industrial"](around:{radius_meters},{lat},{lon}); nwr["building"="industrial"](around:{radius_meters},{lat},{lon});'
+                    osm_query = f"""
+                    nwr["industrial"](around:{radius_meters},{lat},{lon});
+                    nwr["building"="industrial"](around:{radius_meters},{lat},{lon});
+                    nwr["building"="warehouse"](around:{radius_meters},{lat},{lon});
+                    nwr["landuse"="industrial"](around:{radius_meters},{lat},{lon});
+                    nwr["amenity"="townhall"](around:{radius_meters},{lat},{lon});
+                    nwr["office"="government"](around:{radius_meters},{lat},{lon});
+                    """
                 else:
-                    osm_query = f'nwr["industrial"](around:{radius_meters},{lat},{lon}); nwr["name"~"Metall",i](around:{radius_meters},{lat},{lon}); nwr["name"~"Zerspanung",i](around:{radius_meters},{lat},{lon});'
+                    osm_query = f"""
+                    nwr["industrial"](around:{radius_meters},{lat},{lon});
+                    nwr["building"="industrial"](around:{radius_meters},{lat},{lon});
+                    nwr["craft"="metal_construction"](around:{radius_meters},{lat},{lon});
+                    nwr["factory"="yes"](around:{radius_meters},{lat},{lon});
+                    nwr["name"~"Metall",i](around:{radius_meters},{lat},{lon});
+                    nwr["name"~"Zerspanung",i](around:{radius_meters},{lat},{lon});
+                    nwr["name"~"Maschinen",i](around:{radius_meters},{lat},{lon});
+                    nwr["name"~"Werkzeugbau",i](around:{radius_meters},{lat},{lon});
+                    """
                 
                 overpass_url = "https://overpass-api.de/api/interpreter"
                 query = f"[out:json][timeout:90]; ({osm_query}); out tags center;"
+                
                 response = requests.get(overpass_url, params={'data': query}, timeout=60)
                 if response.status_code == 200:
                     elements = response.json().get('elements', [])
                     parsed_leads = []
                     for el in elements:
                         tags = el.get('tags', {})
+                        
                         f_name = tags.get('name', tags.get('operator', None))
-                        if not f_name: continue
-                        f_addr = f"{tags.get('addr:street', '')} {tags.get('addr:housenumber', '')}, {tags.get('addr:postcode', plz)} {tags.get('addr:city', '')}".strip(", ")
+                        if not f_name:
+                            if tags.get('amenity') == 'townhall': f_name = f"Rathaus / Gemeindeamt ({plz})"
+                            elif tags.get('office') == 'government': f_name = f"Städtische Verwaltung / Amt ({plz})"
+                            else: continue
+                            
+                        street = tags.get('addr:street', 'Hauptstraße')
+                        nr = tags.get('addr:housenumber', '')
+                        p_code = tags.get('addr:postcode', plz)
+                        city = tags.get('addr:city', 'Region Hannover')
+                        f_addr = f"{street} {nr}, {p_code} {city}".strip()
+                        
                         parsed_leads.append({
                             'name': f_name,
-                            'address': f_addr if len(f_addr) > 5 else f"Gewerbegebiet, {plz}",
-                            'phone': tags.get('phone', 'Nicht hinterlegt')
+                            'address': f_addr,
+                            'phone': tags.get('phone', tags.get('contact:phone', 'Nicht hinterlegt'))
                         })
+                    
                     cnt = add_leads(parsed_leads)
-                    st.success(f"🎉 {cnt} freie Industrie-Potenziale geladen!")
-                else: st.error("Live-Server überlastet. Nutze den '30 Sofort-Leads'-Knopf!")
-            else: st.error("PLZ nicht gefunden.")
-        except Exception: st.error("Verbindung kurz blockiert. Nutze den Demo-Knopf links!")
+                    st.success(f"🎉 {cnt} Potenziale in den Pool geladen!")
+                else:
+                    st.error("Der Live-Server teilt gerade keine Daten. Bitte nutze kurz den '30 Sofort-Leads'-Knopf!")
+            else:
+                st.error("Postleitzahl nicht gefunden.")
+        except Exception:
+            st.error("Server-Verbindung kurzfristig überlastet. Bitte nutze den Demo-Knopf!")
 
 # DEMO SUCHE
 if demo_btn and plz:
-    firmen_pool = ["Müller Präzisionsteile", "Garbsener Metallbau GmbH", "CNC-Technik Nord", "Schulz Logistik", "Zerspanungstechnik Krause", "Mert BauMa Zulieferungen", "Hassan Transport Logistik"]
+    pool_solar = [
+        f"Rathaus Seelze / Stadtverwaltung", f"Gemeindeamt Wedemark Bauamt", f"Stadt Garbsen Liegenschaften",
+        "Müller Präzisionsteile GmbH", "Garbsener Metallbau GmbH", "CNC-Technik Nord", "Schulz Logistikzentrum", 
+        "Hannoversche Gießereiwerke", "Zerspanungstechnik Krause", "Mert BauMa Hauptlager", "Hassan Transport Logistik"
+    ]
+    pool_3nine = [
+        "CNC-Technik Nord & Co. KG", "Metallbau Schmidt & Söhne", "Dreherei Wagner e.K.", 
+        "Automotive Zulieferer Garbsen", "Werkzeugbau Lehrte GmbH", "Zerspanung & Dreherei Meyer"
+    ]
+    
+    active_pool = pool_solar if "Solar" in projekt else pool_3nine
     mock_elements = []
     for i in range(30):
+        name = f"{random.choice(active_pool)} ({i+1})"
         mock_elements.append({
-            'name': f"{random.choice(firmen_pool)} {random.choice(['GmbH', '& Co. KG'])} ({i+1})",
-            'address': f"Industriestraße {random.randint(1,120)}, {plz} Region Hannover",
+            'name': name,
+            'address': f"Industriestraße {random.randint(1,120)} oder Marktplatz, {plz} Umland Hannover",
             'phone': f"05131 / {random.randint(10000, 99999)}"
         })
     cnt = add_leads(mock_elements)
-    st.success(f"🎲 {cnt} Potenziale sofort geladen!")
+    st.success(f"🎲 {cnt} realistische Test-Potenziale sofort in den Pool geworfen!")
 
 # --- DATEN-ANSICHT & "ZIEHEN" ---
 current_project_leads = {k: v for k, v in st.session_state.db_leads.items() if v["Projekt"] == projekt}
@@ -162,7 +205,6 @@ if current_project_leads:
         badge_class = "badge-solar" if "Solar" in projekt else "badge-3nine"
         proj_label = "☀️ SOLAR" if "Solar" in projekt else "🌀 3NINE"
         
-        # Erweiterte Kachel mit Bearbeiter und Wiedervorlage
         st.markdown(f"""
             <div class="lead-card">
                 <span class="{badge_class}">{proj_label}</span>
@@ -172,7 +214,6 @@ if current_project_leads:
             </div>
         """, unsafe_allow_html=True)
         
-        # Eingabebereich
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.markdown("<p style='color:#8bc34a; font-weight:bold;'>👤 Wer bist du?</p>", unsafe_allow_html=True)
@@ -189,7 +230,6 @@ if current_project_leads:
             st.markdown("<p style='color:#8bc34a; font-weight:bold;'>⏳ Wiedervorlage (WV):</p>", unsafe_allow_html=True)
             wv_check = st.checkbox("Wiedervorlage setzen", value=(lead["Wiedervorlage"] != "Keine"))
             if wv_check:
-                # Setzt das Datum um, falls schon eins existiert
                 default_date = datetime.strptime(lead["Wiedervorlage"], "%d.%m.%Y").date() if lead["Wiedervorlage"] != "Keine" else date.today()
                 wv_datum = st.date_input("Anrufen am:", value=default_date, format="DD.MM.YYYY")
                 wv_text = wv_datum.strftime("%d.%m.%Y")
