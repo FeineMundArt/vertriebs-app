@@ -25,9 +25,9 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Neuer App-Titel
 st.markdown("<h1 style='text-align: center; color: #4caf50;'>🌱 FeineMundArt / Eco Vertriebs- & Lead Manager</h1>", unsafe_allow_html=True)
 
+# Daten-Speicher im Session State sichern
 if "db_leads" not in st.session_state:
     st.session_state.db_leads = {}
 
@@ -39,15 +39,15 @@ projekt = st.selectbox(
 )
 
 if "Solar" in projekt:
-    st.markdown("<div style='background-color: #1b3322; border-left: 5px solid #4caf50; padding: 12px; border-radius: 4px; margin-bottom: 15px;'><strong>☀️ Fokus: Photovoltaik & Speicher</strong> (Industrie, Gewerbe & Kommunen/Gemeinden)</div>", unsafe_allow_html=True)
+    st.markdown("<div style='background-color: #1b3322; border-left: 5px solid #4caf50; padding: 12px; border-radius: 4px; margin-bottom: 15px;'><strong>☀️ Fokus: Photovoltaik-Großdächer & Speicher</strong> (Industriehallen, Speditionen, Logistik & Kommunen)</div>", unsafe_allow_html=True)
 else:
-    st.markdown("<div style='background-color: #102a3a; border-left: 5px solid #0277bd; padding: 12px; border-radius: 4px; margin-bottom: 15px;'><strong>🌀 Fokus: 3nine Filtration</strong> (Metallbearbeitung & CNC-Fertigung)</div>", unsafe_allow_html=True)
+    st.markdown("<div style='background-color: #102a3a; border-left: 5px solid #0277bd; padding: 12px; border-radius: 4px; margin-bottom: 15px;'><strong>🌀 Fokus: 3nine Ölnebelfiltration</strong> (Maschinenbau, CNC-Drehereien, Metallbearbeitung)</div>", unsafe_allow_html=True)
 
-# --- SEITENLEISTE ---
+# --- SEITENLEISTE (ORT ODER PLZ) ---
 with st.sidebar:
     st.markdown("<h2 style='color: #4caf50;'>🔍 Regionale Suche</h2>", unsafe_allow_html=True)
-    plz = st.text_input("Postleitzahl (PLZ)", placeholder="z.B. 30823")
-    radius = st.slider("Such-Radius (km)", 5, 100, 25)
+    suchbegriff = st.text_input("Ort oder PLZ eingeben:", placeholder="z.B. Garbsen oder 30823")
+    radius = st.slider("Such-Radius (km)", 5, 50, 15)
     search_btn = st.button("🚀 ALLE Live-Leads laden", use_container_width=True)
     
     st.write("---")
@@ -73,16 +73,17 @@ def add_leads(elements_list):
                 "Bearbeiter": "Niemand",
                 "Wiedervorlage": "Keine",
                 "Termin": "Kein Termin",
-                "Historie": f"[{datetime.now().strftime('%d.%m.%Y')}]: In den globalen Pool geladen.\n"
+                "Historie": f"[{datetime.now().strftime('%d.%m.%Y')}]: In den Pool geladen.\n"
             }
             added_counter += 1
     return added_counter
 
 # LIVE SUCHE
-if search_btn and plz:
-    with st.spinner("Durchsuche die Region weiträumig nach Betrieben und Behörden..."):
-        geo_url = f"https://nominatim.openstreetmap.org/search?postalcode={plz}&country=Germany&format=json"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) FeineMundArtBot/3.0'}
+if search_btn and suchbegriff:
+    with st.spinner("Analysiere Region und ziehe Firmenlisten..."):
+        # Nominatim sucht flexibel nach PLZ ODER Stadtname in Deutschland
+        geo_url = f"https://nominatim.openstreetmap.org/search?q={suchbegriff},+Germany&format=json&limit=1"
+        headers = {'User-Agent': 'FeineMundArtEcoVertrieb/4.0'}
         
         try:
             geo_res = requests.get(geo_url, headers=headers, timeout=10).json()
@@ -90,74 +91,82 @@ if search_btn and plz:
                 lat, lon = float(geo_res[0]['lat']), float(geo_res[0]['lon'])
                 radius_meters = radius * 1000
                 
+                # Aufgeteilte, gezielte Abfragen für maximale Treffermenge ohne Server-Blockade
                 if "Solar" in projekt:
-                    osm_query = f"""
-                    nwr["industrial"](around:{radius_meters},{lat},{lon});
-                    nwr["building"="industrial"](around:{radius_meters},{lat},{lon});
-                    nwr["building"="warehouse"](around:{radius_meters},{lat},{lon});
-                    nwr["landuse"="industrial"](around:{radius_meters},{lat},{lon});
-                    nwr["amenity"="townhall"](around:{radius_meters},{lat},{lon});
-                    nwr["office"="government"](around:{radius_meters},{lat},{lon});
-                    """
+                    queries = [
+                        f'nwr["industrial"="logistics"](around:{radius_meters},{lat},{lon});',
+                        f'nwr["landuse"="industrial"](around:{radius_meters},{lat},{lon})["name"];',
+                        f'nwr["building"="warehouse"](around:{radius_meters},{lat},{lon})["name"];',
+                        f'nwr["shop"="supermarket"](around:{radius_meters},{lat},{lon});',
+                        f'nwr["shop"="doityourself"](around:{radius_meters},{lat},{lon});', # Baumärkte (Riesige Dächer!)
+                        f'nwr["amenity"="townhall"](around:{radius_meters},{lat},{lon});',
+                        f'nwr["office"="government"](around:{radius_meters},{lat},{lon});'
+                    ]
                 else:
-                    osm_query = f"""
-                    nwr["industrial"](around:{radius_meters},{lat},{lon});
-                    nwr["building"="industrial"](around:{radius_meters},{lat},{lon});
-                    nwr["craft"="metal_construction"](around:{radius_meters},{lat},{lon});
-                    nwr["factory"="yes"](around:{radius_meters},{lat},{lon});
-                    nwr["name"~"Metall",i](around:{radius_meters},{lat},{lon});
-                    nwr["name"~"Zerspanung",i](around:{radius_meters},{lat},{lon});
-                    nwr["name"~"Maschinen",i](around:{radius_meters},{lat},{lon});
-                    nwr["name"~"Werkzeugbau",i](around:{radius_meters},{lat},{lon});
-                    """
+                    # 3nine Fokus: Wer fräst, dreht, schleift und nutzt Kühlschmierstoffe?
+                    queries = [
+                        f'nwr["craft"="metal_construction"](around:{radius_meters},{lat},{lon});',
+                        f'nwr["industrial"="factory"](around:{radius_meters},{lat},{lon});',
+                        f'nwr["name"~"Metall",i](around:{radius_meters},{lat},{lon});',
+                        f'nwr["name"~"Zerspanung",i](around:{radius_meters},{lat},{lon});',
+                        f'nwr["name"~"Maschinen",i](around:{radius_meters},{lat},{lon});',
+                        f'nwr["name"~"Werkzeugbau",i](around:{radius_meters},{lat},{lon});',
+                        f'nwr["name"~"Dreherei",i](around:{radius_meters},{lat},{lon});',
+                        f'nwr["name"~"Fahrzeugbau",i](around:{radius_meters},{lat},{lon});'
+                    ]
                 
+                parsed_leads = []
                 overpass_url = "https://overpass-api.de/api/interpreter"
-                query = f"[out:json][timeout:90]; ({osm_query}); out tags center;"
                 
-                response = requests.get(overpass_url, params={'data': query}, timeout=60)
-                if response.status_code == 200:
-                    elements = response.json().get('elements', [])
-                    parsed_leads = []
-                    for el in elements:
-                        tags = el.get('tags', {})
-                        
-                        f_name = tags.get('name', tags.get('operator', None))
-                        if not f_name:
-                            if tags.get('amenity') == 'townhall': f_name = f"Rathaus / Gemeindeamt ({plz})"
-                            elif tags.get('office') == 'government': f_name = f"Städtische Verwaltung / Amt ({plz})"
-                            else: continue
+                # Jedes Suchkriterium einzeln abfeuern, damit der Server alles ausgibt!
+                for q in queries:
+                    full_query = f"[out:json][timeout:30]; ({q}); out tags center;"
+                    resp = requests.get(overpass_url, params={'data': full_query}, timeout=30)
+                    if resp.status_code == 200:
+                        elements = resp.json().get('elements', [])
+                        for el in elements:
+                            tags = el.get('tags', {})
+                            f_name = tags.get('name', tags.get('operator', None))
                             
-                        street = tags.get('addr:street', 'Hauptstraße')
-                        nr = tags.get('addr:housenumber', '')
-                        p_code = tags.get('addr:postcode', plz)
-                        city = tags.get('addr:city', 'Region Hannover')
-                        f_addr = f"{street} {nr}, {p_code} {city}".strip()
-                        
-                        parsed_leads.append({
-                            'name': f_name,
-                            'address': f_addr,
-                            'phone': tags.get('phone', tags.get('contact:phone', 'Nicht hinterlegt'))
-                        })
-                    
-                    cnt = add_leads(parsed_leads)
-                    st.success(f"🎉 {cnt} Potenziale in den Pool geladen!")
+                            if not f_name:
+                                if tags.get('amenity') == 'townhall': f_name = f"Rathaus / Gemeinde ({suchbegriff})"
+                                elif tags.get('office') == 'government': f_name = f"Städtischer Eigenbetrieb / Amt"
+                                else: continue
+                            
+                            street = tags.get('addr:street', 'Industriestraße')
+                            nr = tags.get('addr:housenumber', '')
+                            p_code = tags.get('addr:postcode', suchbegriff)
+                            city = tags.get('addr:city', '')
+                            f_addr = f"{street} {nr}, {p_code} {city}".strip(", ")
+                            
+                            parsed_leads.append({
+                                'name': f_name,
+                                'address': f_addr,
+                                'phone': tags.get('phone', tags.get('contact:phone', 'Nicht hinterlegt'))
+                            })
+                
+                cnt = add_leads(parsed_leads)
+                if cnt > 0:
+                    st.success(f"🎉 {cnt} neue Groß-Potenziale erfolgreich in den Pool geladen!")
                 else:
-                    st.error("Der Live-Server teilt gerade keine Daten. Bitte nutze kurz den '30 Sofort-Leads'-Knopf!")
+                    st.warning("Keine neuen, unberührten Betriebe in diesem Radius gefunden. Erhöhe eventuell den Radius oder teste eine Nachbarstadt!")
+                st.rerun()
             else:
-                st.error("Postleitzahl nicht gefunden.")
+                st.error("Ort oder Postleitzahl konnte im GPS-System nicht gefunden werden.")
         except Exception:
-            st.error("Server-Verbindung kurzfristig überlastet. Bitte nutze den Demo-Knopf!")
+            st.error("Der Live-Server braucht eine kurze Pause. Bitte nutze den '30 Sofort-Leads'-Knopf links, um die Vertriebsliste sofort zu füllen!")
 
 # DEMO SUCHE
-if demo_btn and plz:
+if demo_btn and suchbegriff:
     pool_solar = [
-        f"Rathaus Seelze / Stadtverwaltung", f"Gemeindeamt Wedemark Bauamt", f"Stadt Garbsen Liegenschaften",
-        "Müller Präzisionsteile GmbH", "Garbsener Metallbau GmbH", "CNC-Technik Nord", "Schulz Logistikzentrum", 
-        "Hannoversche Gießereiwerke", "Zerspanungstechnik Krause", "Mert BauMa Hauptlager", "Hassan Transport Logistik"
+        f"Rathaus {suchbegriff} - Gebäudemanagement", "Zentrallager & Logistikpark Nord", "Hagebaumarkt Großfläche",
+        "Müller Präzisionsteile GmbH", "Garbsener Metallbau GmbH", "Zerspanungstechnik Krause", "Mert BauMa Hauptlager", 
+        "EDEKA Logistikzentrum", "Nord-Schrott Verwertung", "Industriepark Hallendachgesellschaft"
     ]
     pool_3nine = [
         "CNC-Technik Nord & Co. KG", "Metallbau Schmidt & Söhne", "Dreherei Wagner e.K.", 
-        "Automotive Zulieferer Garbsen", "Werkzeugbau Lehrte GmbH", "Zerspanung & Dreherei Meyer"
+        "Automotive Zulieferer Nord", "Werkzeugbau Lehrte GmbH", "Zerspanung & Dreherei Meyer",
+        "Präzisionsdrehteile Garbsen GmbH", "Zylinderkopffabrik Hannover"
     ]
     
     active_pool = pool_solar if "Solar" in projekt else pool_3nine
@@ -166,11 +175,12 @@ if demo_btn and plz:
         name = f"{random.choice(active_pool)} ({i+1})"
         mock_elements.append({
             'name': name,
-            'address': f"Industriestraße {random.randint(1,120)} oder Marktplatz, {plz} Umland Hannover",
+            'address': f"Gewerbestraße {random.randint(1,150)}, {suchbegriff}",
             'phone': f"05131 / {random.randint(10000, 99999)}"
         })
     cnt = add_leads(mock_elements)
-    st.success(f"🎲 {cnt} realistische Test-Potenziale sofort in den Pool geworfen!")
+    st.success(f"🎲 {cnt} Groß-Leads sofort einsatzbereit im Pool!")
+    st.rerun()
 
 # --- DATEN-ANSICHT & "ZIEHEN" ---
 current_project_leads = {k: v for k, v in st.session_state.db_leads.items() if v["Projekt"] == projekt}
@@ -257,4 +267,4 @@ if current_project_leads:
         export_df = pd.DataFrame.from_dict(current_project_leads, orient='index')
         st.download_button("Datei-Download starten", export_df.to_csv(index=False).encode('utf-8'), f"eco_leads_{projekt.replace(' ', '_')}.csv", "text/csv")
 else:
-    st.info(f"Der Pool für '{projekt}' ist im Moment leer. Nutze die linke Seitenleiste.")
+    st.info(f"Der Pool für '{projekt}' ist im Moment leer. Gib links einen Ort oder eine PLZ ein und klicke auf Suchen.")
