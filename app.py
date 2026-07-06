@@ -2,12 +2,12 @@ import streamlit as st
 import subprocess
 import os
 import sqlite3
+import requests
+import random
 from datetime import datetime, date
 import pandas as pd
 
 from config import DB_PATH
-from modules.lead_search import search_live_leads
-from modules.lead_pool import generate_mock_leads
 
 # --- AUTOMATISCHE DATENBANK-INITIALISIERUNG ---
 if not os.path.exists(DB_PATH):
@@ -16,6 +16,132 @@ if not os.path.exists(DB_PATH):
     except Exception as e:
         st.error(f"Datenbankfehler beim Start: {e}")
 
+# --- INTEGRATION: LIVE-SUCH-MODUL ---
+def search_live_leads(suchbegriff, radius_km, projekt):
+    geo_url = f"https://nominatim.openstreetmap.org/search?q={suchbegriff},+Germany&format=json&limit=1"
+    headers = {'User-Agent': 'EcoLeadCRM_SearchSystem/1.0'}
+    try:
+        geo_res = requests.get(geo_url, headers=headers, timeout=10).json()
+        if not geo_res:
+            return "Ort oder PLZ konnte nicht gefunden werden."
+        
+        lat, lon = float(geo_res[0]['lat']), float(geo_res[0]['lon'])
+        radius_meters = radius_km * 1000
+        
+        if "Solar" in projekt:
+            osm_query = f"""
+            nwr["industrial"="logistics"](around:{radius_meters},{lat},{lon});
+            nwr["building"="warehouse"](around:{radius_meters},{lat},{lon})["name"];
+            nwr["shop"="supermarket"](around:{radius_meters},{lat},{lon})["name"];
+            nwr["shop"="doityourself"](around:{radius_meters},{lat},{lon})["name"];
+            nwr["amenity"="townhall"](around:{radius_meters},{lat},{lon});
+            nwr["landuse"="industrial"](around:{radius_meters},{lat},{lon})["name"];
+            """
+        else:
+            osm_query = f"""
+            nwr["craft"="metal_construction"](around:{radius_meters},{lat},{lon})["name"];
+            nwr["industrial"="factory"](around:{radius_meters},{lat},{lon})["name"];
+            nwr["name"~"Zerspanung",i](around:{radius_meters},{lat},{lon});
+            nwr["name"~"Dreherei",i](around:{radius_meters},{lat},{lon});
+            nwr["name"~"Werkzeugbau",i](around:{radius_meters},{lat},{lon});
+            nwr["name"~"Maschinen",i](around:{radius_meters},{lat},{lon});
+            """
+        
+        overpass_url = "https://overpass-api.de/api/interpreter"
+        full_query = f"[out:json][timeout:60]; ({osm_query}); out tags center;"
+        
+        resp = requests.get(overpass_url, params={'data': full_query}, timeout=45)
+        if resp.status_code != 200:
+            return "Der Live-Server ist gerade überlastet. Bitte versuche es gleich noch einmal."
+            
+        elements = resp.json().get('elements', [])
+        added_counter = 0
+        
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        heute = datetime.now().strftime("%d.%m.%Y")
+        
+        for el in elements:
+            tags = el.get('tags', {})
+            f_name = tags.get('name', tags.get('operator', None))
+            if not f_name:
+                if tags.get('amenity') == 'townhall': f_name = f"Rathaus / Gemeinde ({suchbegriff})"
+                else: continue
+            
+            street = tags.get('addr:street', 'Gewerbegebiet')
+            nr = tags.get('addr:housenumber', '')
+            p_code = tags.get('addr:postcode', suchbegriff)
+            city = tags.get('addr:city', '')
+            f_addr = f"{street} {nr}, {p_code} {city}".strip(", ")
+            phone = tags.get('phone', tags.get('contact:phone', 'Nicht hinterlegt'))
+            
+            try:
+                cursor.execute("""
+                    INSERT INTO leads (projekt, firmenname, adresse, telefon, suchort, eingetragen_am)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (projekt, f_name, f_addr, phone, suchbegriff, heute))
+                
+                lead_id = cursor.lastrowid
+                cursor.execute("""
+                    INSERT INTO history (lead_id, timestamp, bearbeiter, notiz)
+                    VALUES (?, ?, ?, ?)
+                """, (lead_id, heute, 'System', 'In den CRM-Pool geladen.'))
+                added_counter += 1
+            except sqlite3.IntegrityError:
+                continue
+                
+        conn.commit()
+        conn.close()
+        return added_counter
+    except Exception as e:
+        return f"Fehler bei der Suche: {str(e)}"
+
+# --- INTEGRATION: LEAD-POOL-SIMULATOR ---
+def generate_mock_leads(suchbegriff, projekt):
+    if "Solar" in projekt:
+        pool = [
+            "Zentrallager Logistikpark Nord", "Hagebaumarkt Großfläche", "EDEKA Logistikzentrum",
+            "Amazon Verteilzentrum", "Gewerbepark Hallendachgesellschaft", "Spedition & Transport Garbsen GmbH",
+            "Rathaus Gebäudemanagement", "Städtischer Bauhof", "Metro Großmarkt Liegenschaft"
+        ]
+        addr_style = "Industriestraße"
+    else:
+        pool = [
+            "CNC-Technik Nord & Co. KG", "Metallbau Schmidt & Söhne", "Dreherei Wagner e.K.", 
+            "Präzisionsdrehteile GmbH", "Zerspanungstechnik Krause", "Werkzeugbau Lehrte GmbH",
+            "Zylinderkopffabrik Hannover", "Maschinenbau Meier & Partner", "Formenbau Müller"
+        ]
+        addr_style = "Werkstraße"
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    heute = datetime.now().strftime("%d.%m.%Y")
+    added_counter = 0
+
+    for i in range(30):
+        name = f"{random.choice(pool)} ({i+1})"
+        f_addr = f"{addr_style} {random.randint(1,180)}, {suchbegriff}"
+        phone = f"05131 / {random.randint(10000, 99999)}"
+        try:
+            cursor.execute("""
+                INSERT INTO leads (projekt, firmenname, adresse, telefon, suchort, eingetragen_am)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (projekt, name, f_addr, phone, suchbegriff, heute))
+            
+            lead_id = cursor.lastrowid
+            cursor.execute("""
+                INSERT INTO history (lead_id, timestamp, bearbeiter, notiz)
+                VALUES (?, ?, ?, ?)
+            """, (lead_id, heute, 'System', 'Test-Lead generiert.'))
+            added_counter += 1
+        except sqlite3.IntegrityError:
+            continue
+
+    conn.commit()
+    conn.close()
+    return added_counter
+
+
 # --- MODERNES DESIGN SETUP ---
 st.set_page_config(
     page_title="FeineMundArt / Eco Lead Manager Pro", 
@@ -23,7 +149,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom Global CSS für das dunkle Umwelt-Design
 st.markdown("""
     <style>
     .stApp { background-color: #0d1611; color: #e0e6e3; }
@@ -47,7 +172,6 @@ with st.sidebar:
     st.write("---")
     st.markdown("<h3 style='color: #4caf50;'>🔍 Regionale Suche</h3>", unsafe_allow_html=True)
     
-    # Projekt-Auswahl
     projekt = st.selectbox(
         "Wähle das Projekt:",
         ["Solar & Speicher (Industrie-Solar)", "3nine (Schmierstoff- & Ölnebelfilter)"]
@@ -80,7 +204,6 @@ def get_stats():
 
 offen, bereit, termine = get_stats()
 
-# Anzeige der KPI-Karten für das gewählte Projekt
 col1, col2, col3 = st.columns(3)
 with col1:
     st.markdown(f"<div class='dashboard-card'><h3 style='color:#4caf50;'>📥 Freie Leads</h3><h2>{offen}</h2><p style='color:#a1b5ab;'>Verfügbar im Pool</p></div>", unsafe_allow_html=True)
@@ -108,7 +231,6 @@ if demo_btn and suchbegriff:
 st.write("---")
 st.subheader("📋 Lead-Pool & CRM-Zentrale")
 
-# Live-Daten für dieses Projekt laden
 def load_project_leads():
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -127,7 +249,6 @@ if not df_leads.empty:
         horizontal=True
     )
     
-    # Filterung anwenden
     if status_filter == "📥 Freie Leads":
         df_filtered = df_leads[df_leads['status'] == 'Offen (Unbearbeitet)']
     elif status_filter == "🔄 In Bearbeitung":
@@ -140,18 +261,15 @@ if not df_leads.empty:
     if df_filtered.empty:
         st.info("In dieser Kategorie liegen aktuell keine Adressen vor.")
     else:
-        # Dropdown für die Firmenauswahl
         firmen_liste = df_filtered['firmenname'].tolist()
         wahl_firma = st.selectbox(f"Wähle eine Firma aus ({len(firmen_liste)} Treffer):", firmen_liste)
         
-        # Details der gewählten Firma holen
         lead_row = df_filtered[df_filtered['firmenname'] == wahl_firma].iloc[0]
         lead_id = int(lead_row['id'])
         
         badge_style = "badge-solar" if "Solar" in projekt else "badge-3nine"
         proj_label = "☀️ SOLAR" if "Solar" in projekt else "🌀 3NINE"
         
-        # HTML Karte sauber formatiert ohne fehlerhafte Zeilenumbrüche
         html_card = f"""
             <div class="lead-card">
                 <span class="{badge_style}">{proj_label}</span>
@@ -162,7 +280,6 @@ if not df_leads.empty:
         """
         st.markdown(html_card, unsafe_allow_html=True)
         
-        # Eingabemaske für das Telefonat
         col_s1, col_s2, col_s3 = st.columns(3)
         with col_s1:
             neuer_status = st.selectbox(
@@ -184,20 +301,18 @@ if not df_leads.empty:
         with col_s3:
             termin_text = st.text_input("Fixer Besprechungstermin:", value=lead_row['termin'], placeholder="z.B. 14.08. um 09:30")
             
-        notiz_text = st.text_input("Telefon-Notiz hinzufügen:", placeholder="z.B. Entscheider spricht kein Interesse aus / Rückruf nächste Woche...")
+        notiz_text = st.text_input("Telefon-Notiz hinzufügen:", placeholder="z.B. Rückruf nächste Woche...")
         
         if st.button("💾 Lead-Status & Notiz speichern", type="primary", use_container_width=True):
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
             
-            # 1. Update in der Lead-Tabelle
             cursor.execute("""
                 UPDATE leads 
                 SET status = ?, bearbeiter = ?, wiedervorlage = ?, termin = ?
                 WHERE id = ?
             """, (neuer_status, aktueller_nutzer, wv_text, termin_text, lead_id))
             
-            # 2. Historien-Eintrag schreiben, falls eine Notiz eingegeben wurde
             if notiz_text.strip() != "":
                 zeitstempel = datetime.now().strftime("%d.%m.%Y %H:%M")
                 cursor.execute("""
@@ -210,7 +325,6 @@ if not df_leads.empty:
             st.success("Änderungen erfolgreich in der Datenbank gespeichert!")
             st.rerun()
             
-        # Kontakthistorie anzeigen (Verlauf des Leads)
         try:
             conn = sqlite3.connect(DB_PATH)
             history_df = pd.read_sql_query("SELECT timestamp, bearbeiter, notiz FROM history WHERE lead_id = ? ORDER BY id DESC", conn, params=(lead_id,))
