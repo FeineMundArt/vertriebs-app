@@ -6,7 +6,6 @@ from datetime import datetime, date
 import pandas as pd
 
 from config import DB_PATH
-# Wir laden deine beiden neuen Module aus dem Ordner
 from modules.lead_search import search_live_leads
 from modules.lead_pool import generate_mock_leads
 
@@ -43,7 +42,7 @@ st.markdown("<h1 style='text-align: center; color: #4caf50;'>🌱 EcoLead Manage
 # --- SEITENLEISTE (Nutzer & Suche) ---
 with st.sidebar:
     st.markdown("<h3 style='color: #4caf50;'>👤 Aktiver Nutzer</h3>", unsafe_allow_html=True)
-    aktueller_nutzer = st.selectbox("Wer arbeitet gerade?", ["Patrick", "Elke", "Admin"]) [cite: 2026-02-19, 2026-03-17]
+    aktueller_nutzer = st.selectbox("Wer arbeitet gerade?", ["Patrick", "Elke", "Admin"])
     
     st.write("---")
     st.markdown("<h3 style='color: #4caf50;'>🔍 Regionale Suche</h3>", unsafe_allow_html=True)
@@ -51,7 +50,7 @@ with st.sidebar:
     # Projekt-Auswahl
     projekt = st.selectbox(
         "Wähle das Projekt:",
-        ["Solar & Speicher (Industrie-Solar)", "3nine (Schmierstoff- & Ölnebelfilter)"] [cite: 2026-01-12]
+        ["Solar & Speicher (Industrie-Solar)", "3nine (Schmierstoff- & Ölnebelfilter)"]
     )
     
     suchbegriff = st.text_input("Ort oder PLZ:", placeholder="z.B. Garbsen")
@@ -157,68 +156,4 @@ if not df_leads.empty:
                 <span class="{badge_style}">{proj_label}</span>
                 <div class="lead-header">{lead_row['firmenname']}</div>
                 <div class="lead-sub">📍 {lead_row['adresse']} &nbsp;|&nbsp; 📞 Telefon: {lead_row['telefon']}</div>
-                <div class="lead-meta" style="color: #a1b5ab;">👤 <b>Bearbeiter:</b> {lead_row['bearbeiter']} &nbsp;|&nbsp; ⏳ <b>WV am:</b> {lead_row['wiedervorlage']} &nbsp;|&nbsp; 📅 <b>Termin:</b> {lead_row['termin']}</div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # Eingabemaske für das Telefonat
-        col_s1, col_s2, col_s3 = st.columns(3)
-        with col_s1:
-            neuer_status = st.selectbox(
-                "Status ändern:", 
-                ["Offen (Unbearbeitet)", "In Bearbeitung", "Termin vereinbart", "Kein Interesse"],
-                index=["Offen (Unbearbeitet)", "In Bearbeitung", "Termin vereinbart", "Kein Interesse"].index(lead_row['status'])
-            )
-        with col_s2:
-            wv_check = st.checkbox("Wiedervorlage setzen", value=(lead_row['wiedervorlage'] != "Keine"))
-            if wv_check:
-                try:
-                    def_date = datetime.strptime(lead_row['wiedervorlage'], "%d.%m.%Y").date()
-                except Exception:
-                    def_date = date.today()
-                wv_datum = st.date_input("Anrufen am:", value=def_date, format="DD.MM.YYYY")
-                wv_text = wv_datum.strftime("%d.%m.%Y")
-            else:
-                wv_text = "Keine"
-        with col_s3:
-            termin_text = st.text_input("Fixer Besprechungstermin:", value=lead_row['termin'], placeholder="z.B. 14.08. um 09:30")
-            
-        notiz_text = st.text_input("Telefon-Notiz hinzufügen:", placeholder="z.B. Entscheider spricht kein Interesse aus / Rückruf nächste Woche...")
-        
-        if st.button("💾 Lead-Status & Notiz speichern", type="primary", use_container_width=True):
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            
-            # 1. Update in der Lead-Tabelle
-            cursor.execute("""
-                UPDATE leads 
-                SET status = ?, bearbeiter = ?, wiedervorlage = ?, termin = ?
-                WHERE id = ?
-            """, (neuer_status, aktueller_nutzer, wv_text, termin_text, lead_id))
-            
-            # 2. Historien-Eintrag schreiben, falls eine Notiz eingegeben wurde
-            if notiz_text.strip() != "":
-                zeitstempel = datetime.now().strftime("%d.%m.%Y %H:%M")
-                cursor.execute("""
-                    INSERT INTO history (lead_id, timestamp, bearbeiter, notiz)
-                    VALUES (?, ?, ?, ?)
-                """, (lead_id, zeitstempel, aktueller_nutzer, notiz_text))
-                
-            conn.commit()
-            conn.close()
-            st.success("Änderungen erfolgreich in der Datenbank gespeichert!")
-            st.rerun()
-            
-        # Kontakthistorie anzeigen (Verlauf des Leads)
-        try:
-            conn = sqlite3.connect(DB_PATH)
-            history_df = pd.read_sql_query("SELECT timestamp, bearbeiter, notiz FROM history WHERE lead_id = ? ORDER BY id DESC", conn, params=(lead_id,))
-            conn.close()
-            if not history_df.empty:
-                st.markdown("##### 📜 Telefon-Verlauf für diesen Betrieb:")
-                for _, h_row in history_df.iterrows():
-                    st.write(f"⏱️ `{h_row['timestamp']}` - **{h_row['bearbeiter']}**: {h_row['notiz']}")
-        except Exception:
-            pass
-else:
-    st.info(f"Der Daten-Pool für '{projekt.split()[0]}' ist noch komplett leer. Gib links eine Region ein und klicke auf Suchen oder Würfeln.")
+                <div class="lead-meta" style="color: #a1b5ab;">👤 <b>Bearbeiter:</b> {lead_row['bearbeiter']} &nbsp;|&nbsp; ⏳ <b>WV am:</b> {
