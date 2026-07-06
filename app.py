@@ -1,270 +1,224 @@
 import streamlit as st
-import requests
-import pandas as pd
+import subprocess
+import os
+import sqlite3
 from datetime import datetime, date
-import random
+import pandas as pd
+
+from config import DB_PATH
+# Wir laden deine beiden neuen Module aus dem Ordner
+from modules.lead_search import search_live_leads
+from modules.lead_pool import generate_mock_leads
+
+# --- AUTOMATISCHE DATENBANK-INITIALISIERUNG ---
+if not os.path.exists(DB_PATH):
+    try:
+        subprocess.run(["python", "database/init_db.py"], check=True)
+    except Exception as e:
+        st.error(f"Datenbankfehler beim Start: {e}")
 
 # --- MODERNES DESIGN SETUP ---
 st.set_page_config(
-    page_title="FeineMundArt / Eco Vertriebs- & Lead Manager", 
+    page_title="FeineMundArt / Eco Lead Manager Pro", 
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS für den modernen Umwelt- & Tech-Look
+# Custom Global CSS für das dunkle Umwelt-Design
 st.markdown("""
     <style>
     .stApp { background-color: #0d1611; color: #e0e6e3; }
     section[data-testid="stSidebar"] { background-color: #14221a !important; border-right: 2px solid #233d2e; }
-    .lead-card { background-color: #182a20; border: 1px solid #2a4737; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); margin-bottom: 20px; }
+    .dashboard-card { background-color: #182a20; border: 1px solid #2a4737; padding: 20px; border-radius: 12px; text-align: center; }
+    .lead-card { background-color: #182a20; border: 1px solid #2a4737; padding: 20px; border-radius: 12px; margin-bottom: 20px; }
     .lead-header { color: #4caf50; font-size: 22px; font-weight: bold; margin-bottom: 5px; }
     .lead-sub { color: #8bc34a; font-size: 14px; margin-bottom: 10px; }
-    .lead-meta { font-size: 13px; color: #a1b5ab; background-color: #111e16; padding: 6px 12px; border-radius: 6px; display: inline-block; margin-top: 5px; }
     .badge-solar { background-color: #2e7d32; color: #ffffff; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; }
     .badge-3nine { background-color: #0277bd; color: #ffffff; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h1 style='text-align: center; color: #4caf50;'>🌱 FeineMundArt / Eco Vertriebs- & Lead Manager</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center; color: #4caf50;'>🌱 EcoLead Manager — Cockpit</h1>", unsafe_allow_html=True)
 
-# Daten-Speicher im Session State sichern
-if "db_leads" not in st.session_state:
-    st.session_state.db_leads = {}
-
-# --- PROJEKTAUSWAHL ---
-st.write("---")
-projekt = st.selectbox(
-    "Wähle das Projekt für deine Mitarbeiter:",
-    ["Solar & Speicher (Industrie-Solar)", "3nine (Schmierstoff- & Ölnebelfilter)"]
-)
-
-if "Solar" in projekt:
-    st.markdown("<div style='background-color: #1b3322; border-left: 5px solid #4caf50; padding: 12px; border-radius: 4px; margin-bottom: 15px;'><strong>☀️ Fokus: Photovoltaik-Großdächer & Speicher</strong> (Industriehallen, Speditionen, Logistik & Kommunen)</div>", unsafe_allow_html=True)
-else:
-    st.markdown("<div style='background-color: #102a3a; border-left: 5px solid #0277bd; padding: 12px; border-radius: 4px; margin-bottom: 15px;'><strong>🌀 Fokus: 3nine Ölnebelfiltration</strong> (Maschinenbau, CNC-Drehereien, Metallbearbeitung)</div>", unsafe_allow_html=True)
-
-# --- SEITENLEISTE (ORT ODER PLZ) ---
+# --- SEITENLEISTE (Nutzer & Suche) ---
 with st.sidebar:
-    st.markdown("<h2 style='color: #4caf50;'>🔍 Regionale Suche</h2>", unsafe_allow_html=True)
-    suchbegriff = st.text_input("Ort oder PLZ eingeben:", placeholder="z.B. Garbsen oder 30823")
-    radius = st.slider("Such-Radius (km)", 5, 50, 15)
+    st.markdown("<h3 style='color: #4caf50;'>👤 Aktiver Nutzer</h3>", unsafe_allow_html=True)
+    aktueller_nutzer = st.selectbox("Wer arbeitet gerade?", ["Patrick", "Elke", "Admin"]) [cite: 2026-02-19, 2026-03-17]
+    
+    st.write("---")
+    st.markdown("<h3 style='color: #4caf50;'>🔍 Regionale Suche</h3>", unsafe_allow_html=True)
+    
+    # Projekt-Auswahl
+    projekt = st.selectbox(
+        "Wähle das Projekt:",
+        ["Solar & Speicher (Industrie-Solar)", "3nine (Schmierstoff- & Ölnebelfilter)"] [cite: 2026-01-12]
+    )
+    
+    suchbegriff = st.text_input("Ort oder PLZ:", placeholder="z.B. Garbsen")
+    radius = st.slider("Such-Radius (km)", 5, 50, 20)
+    
     search_btn = st.button("🚀 ALLE Live-Leads laden", use_container_width=True)
     
     st.write("---")
     st.write("💡 *Server-Sicherheitsnetz*")
-    demo_btn = st.button("🎲 30 Sofort-Leads generieren", use_container_width=True)
+    demo_btn = st.button("🎲 30 Sofort-Leads würfeln", use_container_width=True)
 
-def add_leads(elements_list):
-    added_counter = 0
-    for el in elements_list:
-        name = el.get('name')
-        addr = el.get('address', "Gewerbegebiet")
-        phone = el.get('phone', 'Nicht hinterlegt')
-        lead_key = f"{projekt}_{name}_{addr}".lower()
-        
-        if lead_key not in st.session_state.db_leads:
-            st.session_state.db_leads[lead_key] = {
-                "Projekt": projekt,
-                "Firmenname": name,
-                "Adresse": addr,
-                "Telefon": phone,
-                "Kriterien": {},
-                "Status": "Offen (Unbearbeitet)",
-                "Bearbeiter": "Niemand",
-                "Wiedervorlage": "Keine",
-                "Termin": "Kein Termin",
-                "Historie": f"[{datetime.now().strftime('%d.%m.%Y')}]: In den Pool geladen.\n"
-            }
-            added_counter += 1
-    return added_counter
+# --- STATISTIKEN AUS DER DATENBANK HOLEN ---
+def get_stats():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM leads WHERE status = 'Offen (Unbearbeitet)' AND projekt = ?", (projekt,))
+        offen = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM leads WHERE status = 'In Bearbeitung' AND projekt = ?", (projekt,))
+        bereit = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM leads WHERE status = 'Termin vereinbart' AND projekt = ?", (projekt,))
+        termine = cursor.fetchone()[0]
+        conn.close()
+        return offen, bereit, termine
+    except Exception:
+        return 0, 0, 0
 
-# LIVE SUCHE
+offen, bereit, termine = get_stats()
+
+# Anzeige der KPI-Karten für das gewählte Projekt
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.markdown(f"<div class='dashboard-card'><h3 style='color:#4caf50;'>📥 Freie Leads</h3><h2>{offen}</h2><p style='color:#a1b5ab;'>Verfügbar im Pool</p></div>", unsafe_allow_html=True)
+with col2:
+    st.markdown(f"<div class='dashboard-card'><h3 style='color:#0277bd;'>🔄 In Bearbeitung</h3><h2>{bereit}</h2><p style='color:#a1b5ab;'>Aktuell reserviert</p></div>", unsafe_allow_html=True)
+with col3:
+    st.markdown(f"<div class='dashboard-card'><h3 style='color:#ffb300;'>📅 Termine</h3><h2>{termine}</h2><p style='color:#a1b5ab;'>Erfolge für {projekt.split()[0]}</p></div>", unsafe_allow_html=True)
+
+# --- LOGIK FÜR DIE KNÖPFE ---
 if search_btn and suchbegriff:
-    with st.spinner("Analysiere Region und ziehe Firmenlisten..."):
-        # Nominatim sucht flexibel nach PLZ ODER Stadtname in Deutschland
-        geo_url = f"https://nominatim.openstreetmap.org/search?q={suchbegriff},+Germany&format=json&limit=1"
-        headers = {'User-Agent': 'FeineMundArtEcoVertrieb/4.0'}
-        
-        try:
-            geo_res = requests.get(geo_url, headers=headers, timeout=10).json()
-            if geo_res:
-                lat, lon = float(geo_res[0]['lat']), float(geo_res[0]['lon'])
-                radius_meters = radius * 1000
-                
-                # Aufgeteilte, gezielte Abfragen für maximale Treffermenge ohne Server-Blockade
-                if "Solar" in projekt:
-                    queries = [
-                        f'nwr["industrial"="logistics"](around:{radius_meters},{lat},{lon});',
-                        f'nwr["landuse"="industrial"](around:{radius_meters},{lat},{lon})["name"];',
-                        f'nwr["building"="warehouse"](around:{radius_meters},{lat},{lon})["name"];',
-                        f'nwr["shop"="supermarket"](around:{radius_meters},{lat},{lon});',
-                        f'nwr["shop"="doityourself"](around:{radius_meters},{lat},{lon});', # Baumärkte (Riesige Dächer!)
-                        f'nwr["amenity"="townhall"](around:{radius_meters},{lat},{lon});',
-                        f'nwr["office"="government"](around:{radius_meters},{lat},{lon});'
-                    ]
-                else:
-                    # 3nine Fokus: Wer fräst, dreht, schleift und nutzt Kühlschmierstoffe?
-                    queries = [
-                        f'nwr["craft"="metal_construction"](around:{radius_meters},{lat},{lon});',
-                        f'nwr["industrial"="factory"](around:{radius_meters},{lat},{lon});',
-                        f'nwr["name"~"Metall",i](around:{radius_meters},{lat},{lon});',
-                        f'nwr["name"~"Zerspanung",i](around:{radius_meters},{lat},{lon});',
-                        f'nwr["name"~"Maschinen",i](around:{radius_meters},{lat},{lon});',
-                        f'nwr["name"~"Werkzeugbau",i](around:{radius_meters},{lat},{lon});',
-                        f'nwr["name"~"Dreherei",i](around:{radius_meters},{lat},{lon});',
-                        f'nwr["name"~"Fahrzeugbau",i](around:{radius_meters},{lat},{lon});'
-                    ]
-                
-                parsed_leads = []
-                overpass_url = "https://overpass-api.de/api/interpreter"
-                
-                # Jedes Suchkriterium einzeln abfeuern, damit der Server alles ausgibt!
-                for q in queries:
-                    full_query = f"[out:json][timeout:30]; ({q}); out tags center;"
-                    resp = requests.get(overpass_url, params={'data': full_query}, timeout=30)
-                    if resp.status_code == 200:
-                        elements = resp.json().get('elements', [])
-                        for el in elements:
-                            tags = el.get('tags', {})
-                            f_name = tags.get('name', tags.get('operator', None))
-                            
-                            if not f_name:
-                                if tags.get('amenity') == 'townhall': f_name = f"Rathaus / Gemeinde ({suchbegriff})"
-                                elif tags.get('office') == 'government': f_name = f"Städtischer Eigenbetrieb / Amt"
-                                else: continue
-                            
-                            street = tags.get('addr:street', 'Industriestraße')
-                            nr = tags.get('addr:housenumber', '')
-                            p_code = tags.get('addr:postcode', suchbegriff)
-                            city = tags.get('addr:city', '')
-                            f_addr = f"{street} {nr}, {p_code} {city}".strip(", ")
-                            
-                            parsed_leads.append({
-                                'name': f_name,
-                                'address': f_addr,
-                                'phone': tags.get('phone', tags.get('contact:phone', 'Nicht hinterlegt'))
-                            })
-                
-                cnt = add_leads(parsed_leads)
-                if cnt > 0:
-                    st.success(f"🎉 {cnt} neue Groß-Potenziale erfolgreich in den Pool geladen!")
-                else:
-                    st.warning("Keine neuen, unberührten Betriebe in diesem Radius gefunden. Erhöhe eventuell den Radius oder teste eine Nachbarstadt!")
-                st.rerun()
-            else:
-                st.error("Ort oder Postleitzahl konnte im GPS-System nicht gefunden werden.")
-        except Exception:
-            st.error("Der Live-Server braucht eine kurze Pause. Bitte nutze den '30 Sofort-Leads'-Knopf links, um die Vertriebsliste sofort zu füllen!")
+    with st.spinner("Durchsuche Industrie-Datenbanken..."):
+        ergebnis = search_live_leads(suchbegriff, radius, projekt)
+        if isinstance(ergebnis, int):
+            st.success(f"🎉 {ergebnis} echte Live-Potenziale erfolgreich in die Datenbank geladen!")
+            st.rerun()
+        else:
+            st.error(ergebnis)
 
-# DEMO SUCHE
 if demo_btn and suchbegriff:
-    pool_solar = [
-        f"Rathaus {suchbegriff} - Gebäudemanagement", "Zentrallager & Logistikpark Nord", "Hagebaumarkt Großfläche",
-        "Müller Präzisionsteile GmbH", "Garbsener Metallbau GmbH", "Zerspanungstechnik Krause", "Mert BauMa Hauptlager", 
-        "EDEKA Logistikzentrum", "Nord-Schrott Verwertung", "Industriepark Hallendachgesellschaft"
-    ]
-    pool_3nine = [
-        "CNC-Technik Nord & Co. KG", "Metallbau Schmidt & Söhne", "Dreherei Wagner e.K.", 
-        "Automotive Zulieferer Nord", "Werkzeugbau Lehrte GmbH", "Zerspanung & Dreherei Meyer",
-        "Präzisionsdrehteile Garbsen GmbH", "Zylinderkopffabrik Hannover"
-    ]
-    
-    active_pool = pool_solar if "Solar" in projekt else pool_3nine
-    mock_elements = []
-    for i in range(30):
-        name = f"{random.choice(active_pool)} ({i+1})"
-        mock_elements.append({
-            'name': name,
-            'address': f"Gewerbestraße {random.randint(1,150)}, {suchbegriff}",
-            'phone': f"05131 / {random.randint(10000, 99999)}"
-        })
-    cnt = add_leads(mock_elements)
-    st.success(f"🎲 {cnt} Groß-Leads sofort einsatzbereit im Pool!")
+    ergebnis = generate_mock_leads(suchbegriff, projekt)
+    st.success(f"🎲 {ergebnis} exakt gefilterte Test-Leads für {projekt.split()[0]} eingespielt!")
     st.rerun()
 
-# --- DATEN-ANSICHT & "ZIEHEN" ---
-current_project_leads = {k: v for k, v in st.session_state.db_leads.items() if v["Projekt"] == projekt}
+# --- DATEN-ANSICHT & CRM-BEARBEITUNG ---
+st.write("---")
+st.subheader("📋 Lead-Pool & CRM-Zentrale")
 
-if current_project_leads:
-    st.write("---")
-    st.subheader("📋 Lead-Pool & Bearbeitung")
-    
+# Live-Daten für dieses Projekt laden
+def load_project_leads():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        df = pd.read_sql_query("SELECT * FROM leads WHERE projekt = ?", conn, params=(projekt,))
+        conn.close()
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+df_leads = load_project_leads()
+
+if not df_leads.empty:
     status_filter = st.radio(
-        "Listen-Ansicht:", 
-        ["📥 Freie Leads (Unbearbeitet)", "🔄 In Bearbeitung / Reserviert", "📅 Wiedervorlagen & Termine", "Alle"],
+        "Listen-Ansicht filtern:", 
+        ["📥 Freie Leads", "🔄 In Bearbeitung", "📅 Termine & Wiedervorlagen", "Alle"],
         horizontal=True
     )
     
-    filtered_keys = []
-    for k, v in current_project_leads.items():
-        if status_filter == "Alle": filtered_keys.append(k)
-        elif status_filter == "📥 Freie Leads (Unbearbeitet)" and v["Status"] == "Offen (Unbearbeitet)": filtered_keys.append(k)
-        elif status_filter == "🔄 In Bearbeitung / Reserviert" and v["Status"] == "In Bearbeitung": filtered_keys.append(k)
-        elif status_filter == "📅 Wiedervorlagen & Termine" and v["Status"] in ["In Bearbeitung", "Termin vereinbart"] and v["Wiedervorlage"] != "Keine": filtered_keys.append(k)
-            
-    if not filtered_keys:
+    # Filterung anwenden
+    if status_filter == "📥 Freie Leads":
+        df_filtered = df_leads[df_leads['status'] == 'Offen (Unbearbeitet)']
+    elif status_filter == "🔄 In Bearbeitung":
+        df_filtered = df_leads[df_leads['status'] == 'In Bearbeitung']
+    elif status_filter == "📅 Termine & Wiedervorlagen":
+        df_filtered = df_leads[df_leads['status'].isin(['In Bearbeitung', 'Termin vereinbart']) & (df_leads['wiedervorlage'] != 'Keine')]
+    else:
+        df_filtered = df_leads
+
+    if df_filtered.empty:
         st.info("In dieser Kategorie liegen aktuell keine Adressen vor.")
     else:
-        selected_key = st.selectbox(
-            f"Wähle einen Lead aus ({len(filtered_keys)} verfügbar):", 
-            options=filtered_keys, 
-            format_func=lambda x: f"🏢 {st.session_state.db_leads[x]['Firmenname']} — Bearbeiter: {st.session_state.db_leads[x]['Bearbeiter']} — WV: {st.session_state.db_leads[x]['Wiedervorlage']}"
-        )
+        # Dropdown für die Firmenauswahl
+        firmen_liste = df_filtered['firmenname'].tolist()
+        wahl_firma = st.selectbox(f"Wähle eine Firma aus ({len(firmen_liste)} Treffer):", firmen_liste)
         
-        lead = st.session_state.db_leads[selected_key]
-        badge_class = "badge-solar" if "Solar" in projekt else "badge-3nine"
+        # Details der gewählten Firma holen
+        lead_row = df_filtered[df_filtered['firmenname'] == wahl_firma].iloc[0]
+        lead_id = int(lead_row['id'])
+        
+        badge_style = "badge-solar" if "Solar" in projekt else "badge-3nine"
         proj_label = "☀️ SOLAR" if "Solar" in projekt else "🌀 3NINE"
         
         st.markdown(f"""
             <div class="lead-card">
-                <span class="{badge_class}">{proj_label}</span>
-                <div class="lead-header">{lead['Firmenname']}</div>
-                <div class="lead-sub">📍 {lead['Adresse']} &nbsp;|&nbsp; 📞 Telefon: {lead['Telefon']}</div>
-                <div class="lead-meta">👤 <b>Aktueller Bearbeiter:</b> {lead['Bearbeiter']} &nbsp;|&nbsp; ⏳ <b>Wiedervorlage am:</b> {lead['Wiedervorlage']}</div>
+                <span class="{badge_style}">{proj_label}</span>
+                <div class="lead-header">{lead_row['firmenname']}</div>
+                <div class="lead-sub">📍 {lead_row['adresse']} &nbsp;|&nbsp; 📞 Telefon: {lead_row['telefon']}</div>
+                <div class="lead-meta" style="color: #a1b5ab;">👤 <b>Bearbeiter:</b> {lead_row['bearbeiter']} &nbsp;|&nbsp; ⏳ <b>WV am:</b> {lead_row['wiedervorlage']} &nbsp;|&nbsp; 📅 <b>Termin:</b> {lead_row['termin']}</div>
             </div>
         """, unsafe_allow_html=True)
         
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.markdown("<p style='color:#8bc34a; font-weight:bold;'>👤 Wer bist du?</p>", unsafe_allow_html=True)
-            mitarbeiter_name = st.text_input("Dein Name/Kürzel:", value=lead["Bearbeiter"] if lead["Bearbeiter"] != "Niemand" else "", placeholder="z.B. Patrick")
-            
-        with col2:
-            st.markdown("<p style='color:#8bc34a; font-weight:bold;'>💼 Status:</p>", unsafe_allow_html=True)
-            current_status = st.selectbox(
+        # Eingabemaske für das Telefonat
+        col_s1, col_s2, col_s3 = st.columns(3)
+        with col_s1:
+            neuer_status = st.selectbox(
                 "Status ändern:", 
-                ["Offen (Unbearbeitet)", "In Bearbeitung", "Termin vereinbart", "Kein Interesse"], 
-                index=["Offen (Unbearbeitet)", "In Bearbeitung", "Termin vereinbart", "Kein Interesse"].index(lead["Status"])
+                ["Offen (Unbearbeitet)", "In Bearbeitung", "Termin vereinbart", "Kein Interesse"],
+                index=["Offen (Unbearbeitet)", "In Bearbeitung", "Termin vereinbart", "Kein Interesse"].index(lead_row['status'])
             )
-        with col3:
-            st.markdown("<p style='color:#8bc34a; font-weight:bold;'>⏳ Wiedervorlage (WV):</p>", unsafe_allow_html=True)
-            wv_check = st.checkbox("Wiedervorlage setzen", value=(lead["Wiedervorlage"] != "Keine"))
+        with col_s2:
+            wv_check = st.checkbox("Wiedervorlage setzen", value=(lead_row['wiedervorlage'] != "Keine"))
             if wv_check:
-                default_date = datetime.strptime(lead["Wiedervorlage"], "%d.%m.%Y").date() if lead["Wiedervorlage"] != "Keine" else date.today()
-                wv_datum = st.date_input("Anrufen am:", value=default_date, format="DD.MM.YYYY")
+                try:
+                    def_date = datetime.strptime(lead_row['wiedervorlage'], "%d.%m.%Y").date()
+                except Exception:
+                    def_date = date.today()
+                wv_datum = st.date_input("Anrufen am:", value=def_date, format="DD.MM.YYYY")
                 wv_text = wv_datum.strftime("%d.%m.%Y")
             else:
                 wv_text = "Keine"
-        with col4:
-            st.markdown("<p style='color:#8bc34a; font-weight:bold;'>📅 Fixer Termin:</p>", unsafe_allow_html=True)
-            termin_eingabe = st.text_input("Besprechungstermin:", value=lead["Termin"], placeholder="z.B. 14.08. um 09:30")
+        with col_s3:
+            termin_text = st.text_input("Fixer Besprechungstermin:", value=lead_row['termin'], placeholder="z.B. 14.08. um 09:30")
             
-        neuer_kommentar = st.text_input("Telefon-Notiz hinzufügen:", placeholder="Rückruf vereinbart, weil...")
+        notiz_text = st.text_input("Telefon-Notiz hinzufügen:", placeholder="z.B. Entscheider spricht kein Interesse aus / Rückruf nächste Woche...")
         
-        if st.button("💾 Lead aktualisieren & reservieren", type="primary", use_container_width=True):
-            st.session_state.db_leads[selected_key]["Status"] = current_status
-            st.session_state.db_leads[selected_key]["Termin"] = termin_eingabe
-            st.session_state.db_leads[selected_key]["Bearbeiter"] = mitarbeiter_name if mitarbeiter_name.strip() != "" else "Niemand"
-            st.session_state.db_leads[selected_key]["Wiedervorlage"] = wv_text
+        if st.button("💾 Lead-Status & Notiz speichern", type="primary", use_container_width=True):
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
             
-            if neuer_kommentar:
-                st.session_state.db_leads[selected_key]["Historie"] += f"[{datetime.now().strftime('%d.%m.%Y %H:%M')} - {mitarbeiter_name}]: {neuer_kommentar}\n"
-            st.success("Erfolgreich gespeichert!")
+            # 1. Update in der Lead-Tabelle
+            cursor.execute("""
+                UPDATE leads 
+                SET status = ?, bearbeiter = ?, wiedervorlage = ?, termin = ?
+                WHERE id = ?
+            """, (neuer_status, aktueller_nutzer, wv_text, termin_text, lead_id))
+            
+            # 2. Historien-Eintrag schreiben, falls eine Notiz eingegeben wurde
+            if notiz_text.strip() != "":
+                zeitstempel = datetime.now().strftime("%d.%m.%Y %H:%M")
+                cursor.execute("""
+                    INSERT INTO history (lead_id, timestamp, bearbeiter, notiz)
+                    VALUES (?, ?, ?, ?)
+                """, (lead_id, zeitstempel, aktueller_nutzer, notiz_text))
+                
+            conn.commit()
+            conn.close()
+            st.success("Änderungen erfolgreich in der Datenbank gespeichert!")
             st.rerun()
             
-    st.write("---")
-    if st.button("📥 Projekt-Daten als CSV herunterladen"):
-        export_df = pd.DataFrame.from_dict(current_project_leads, orient='index')
-        st.download_button("Datei-Download starten", export_df.to_csv(index=False).encode('utf-8'), f"eco_leads_{projekt.replace(' ', '_')}.csv", "text/csv")
+        # Kontakthistorie anzeigen (Verlauf des Leads)
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            history_df = pd.read_sql_query("SELECT timestamp, bearbeiter, notiz FROM history WHERE lead_id = ? ORDER BY id DESC", conn, params=(lead_id,))
+            conn.close()
+            if not history_df.empty:
+                st.markdown("##### 📜 Telefon-Verlauf für diesen Betrieb:")
+                for _, h_row in history_df.iterrows():
+                    st.write(f"⏱️ `{h_row['timestamp']}` - **{h_row['bearbeiter']}**: {h_row['notiz']}")
+        except Exception:
+            pass
 else:
-    st.info(f"Der Pool für '{projekt}' ist im Moment leer. Gib links einen Ort oder eine PLZ ein und klicke auf Suchen.")
+    st.info(f"Der Daten-Pool für '{projekt.split()[0]}' ist noch komplett leer. Gib links eine Region ein und klicke auf Suchen oder Würfeln.")
