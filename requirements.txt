@@ -1,6 +1,5 @@
 streamlit
-requests
 pandas
-streamlit-folium
+requests
 folium
-sqlite3
+streamlit-folium
